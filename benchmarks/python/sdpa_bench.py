@@ -144,7 +144,8 @@ def bench_shape(
         mlx_fused_attn, q_mx, k_mx, v_mx, scale, mask, transpose
     )
 
-    atol = 1e-5 if dtype == "float32" else 2e-4
+    # float32 may run in TF32 on NAX GPUs (see test_fast_sdpa.py)
+    atol = 1e-4 if dtype == "float32" else 2e-4
 
     if not mx.allclose(o_mlx_fused, o_mlx_unfused, atol=atol, rtol=atol):
         print(
@@ -251,6 +252,11 @@ if __name__ == "__main__":
         action="store_true",
         help="benchmark the vjp against the fallback",
     )
+    parser.add_argument(
+        "--vit",
+        action="store_true",
+        help="use vision transformer shapes (D=64, L 197/257)",
+    )
     args = parser.parse_args()
     dtypes = ("float16", "float32")[:1]
     transposes = (False,)
@@ -314,9 +320,29 @@ if __name__ == "__main__":
           (  1,  4096,  5000,      256,   24,     4),
           (  1,  2048,  32121,     256,   24,     4),
     )
+
+    # ViT encoder self-attention: 196 or 256 patches plus a class token
+    shapes_vit = (
+        # (  B,   qsl,   ksl, head_dim, n_qh, n_kvh)
+          (  1,   197,   197,       64,    3,     3),
+          (  1,   197,   197,       64,    6,     6),
+          (  1,   197,   197,       64,   12,    12),
+          (  1,   257,   257,       64,    3,     3),
+          (  1,   257,   257,       64,    6,     6),
+          (  1,   257,   257,       64,   12,    12),
+          (  8,   197,   197,       64,    3,     3),
+          (  8,   197,   197,       64,    6,     6),
+          (  8,   197,   197,       64,   12,    12),
+          (  8,   257,   257,       64,    3,     3),
+          (  8,   257,   257,       64,    6,     6),
+          (  8,   257,   257,       64,   12,    12),
+    )
     # fmt: on
 
     shapes = shapes_64 + shapes_72 + shapes_80 + shapes_96 + shapes_128 + shapes_256
+    if args.vit:
+        shapes = shapes_vit
+        dtypes = ("float16", "float32")
 
     if args.backward:
         masks = [None, "causal"]
@@ -353,7 +379,7 @@ if __name__ == "__main__":
                         )
         exit(0)
 
-    masks = [None, "bool", "causal"]
+    masks = [None] if args.vit else [None, "bool", "causal"]
 
     print(
         "  B,   qsl,   ksl, hdim, n_qh, n_kvh, t,   dtype,     mask, t_unfs, t_fuse, "
